@@ -19,6 +19,9 @@
     "JON_SNOW_LOCATION": {
       "description": "we currently only support two stores, zh-tw and en",
       "value": "zh-tw"
+    },
+    "GAME_TITLE": {
+      "遊戲名稱"
     }
   },
   "addons": [
