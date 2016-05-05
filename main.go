@@ -37,6 +37,8 @@ type Review struct {
 	Message   string
 	Rate      string
 	UpdatedAt time.Time `meddler:"updated_at,localtime"`
+	Permalink string
+	Color     string
 }
 
 type Reviews []Review
@@ -53,11 +55,14 @@ type SlackPayload struct {
 }
 
 type SlackAttachment struct {
-	Title     string                 `json:"title"`
-	TitleLink string                 `json:"title_link"`
-	Text      string                 `json:"text"`
-	Fallback  string                 `json:"fallback"`
-	Fields    []SlackAttachmentField `json:"fields"`
+	Author    	string                 `json:"author_name"`
+	AuthorLink	string                 `json:"author_link"`
+	Title     	string                 `json:"title"`
+	TitleLink 	string                 `json:"title_link"`
+	Text      	string                 `json:"text"`
+	Fallback  	string                 `json:"fallback"`
+	Color       string                 `json:"color"`
+	Fields    	[]SlackAttachmentField `json:"fields"`
 }
 
 type SlackAttachmentField struct {
@@ -67,17 +72,18 @@ type SlackAttachmentField struct {
 }
 
 const (
-	TABLE_NAME                = "review"
-	BASE_URI                  = "https://play.google.com"
-	REVIEW_CLASS_NAME         = ".single-review"
-	AUTHOR_NAME_CLASS_NAME    = ".review-info span.author-name a"
-	REVIEW_DATE_CLASS_NAME    = ".review-info .review-date"
-	REVIEW_TITLE_CLASS_NAME   = ".review-body .review-title"
-	REVIEW_MESSAGE_CLASS_NAME = ".review-body"
-	REVIEW_LINK_CLASS_NAME    = ".review-link"
-	REVIEW_RATE_CLASS_NAME    = ".review-info-star-rating .current-rating"
-	RAITING_EMOJI             = ":star:"
-	MAX_REVIEW_NUM            = 40
+	TABLE_NAME                	= "review"
+	BASE_URI                  	= "https://play.google.com"
+	REVIEW_CLASS_NAME         	= ".single-review"
+	AUTHOR_NAME_CLASS_NAME    	= ".review-info span.author-name a"
+	REVIEW_DATE_CLASS_NAME    	= ".review-info .review-date"
+	REVIEW_PERMALINK_CLASS_NAME = ".review-info .reviews-permalink"
+	REVIEW_TITLE_CLASS_NAME   	= ".review-body .review-title"
+	REVIEW_MESSAGE_CLASS_NAME	= ".review-body"
+	REVIEW_LINK_CLASS_NAME    	= ".review-link"
+	REVIEW_RATE_CLASS_NAME    	= ".review-info-star-rating .current-rating"
+	RAITING_EMOJI             	= ":star:"
+	MAX_REVIEW_NUM            	= 40
 )
 
 var (
@@ -137,27 +143,32 @@ func NewConfig(path string) (config Config, err error) {
 	dbh = &DBH{db}
 
 	// override BotName if environment variable found
-	botName := os.Getenv("JON_SNOW_BOT_NAME")
+	botName := os.Getenv("BOT_NAME")
 	if botName != "" {
 		config.BotName = botName
 	}
 
 	// override AppId if environment variable found
-	appId := os.Getenv("JON_SNOW_APP_ID")
+	appId := os.Getenv("APP_ID")
 	if appId != "" {
 		config.AppId = appId
 	}
 
 	// override WebHookUri if environment variable found
-	webHookUri := os.Getenv("JON_SNOW_SLACK_HOOK")
+	webHookUri := os.Getenv("SLACK_HOOK")
 	if webHookUri != "" {
 		config.WebHookUri = webHookUri
 	}
 
 	// override Location if environment variable found
-	location := os.Getenv("JON_SNOW_LOCATION")
+	location := os.Getenv("LOCATION")
 	if location != "" {
 		config.Location = location
+	}
+
+	gameTitle := os.Getenv("GAME_TITLE")
+	if gameTitle != "" {
+		config.MessageText = gameTitle
 	}
 
 	if config.AppId == "" {
@@ -240,7 +251,14 @@ func GetReview(config Config) (Reviews, error) {
 			return
 		}
 
+		reviewPermalinkClass := s.Find(REVIEW_PERMALINK_CLASS_NAME)
+		reviewPermalink, _ := reviewPermalinkClass.Attr("href")
+
 		reviewTitle := s.Find(REVIEW_TITLE_CLASS_NAME).Text()
+		if len(reviewTitle) == 0 {
+			reviewTitle = "無標題"
+		}
+
 		reviewMessage := s.Find(REVIEW_MESSAGE_CLASS_NAME).Text()
 		reviewLink := s.Find(REVIEW_LINK_CLASS_NAME).Text()
 
@@ -249,7 +267,11 @@ func GetReview(config Config) (Reviews, error) {
 		reviewRateNode := s.Find(REVIEW_RATE_CLASS_NAME)
 		rateMessage, _ := reviewRateNode.Attr("style")
 
-		rate := parseRate(rateMessage)
+		rate, rateCount := parseRate(rateMessage)
+		color := "#36a64f"
+		if rateCount < 4 {
+			color = "#ff0000"
+		}
 
 		review := Review{
 			Author:    authorName,
@@ -258,6 +280,8 @@ func GetReview(config Config) (Reviews, error) {
 			Message:   reviewMessage,
 			Rate:      rate,
 			UpdatedAt: date,
+			Permalink: reviewPermalink,
+			Color: color,
 		}
 
 		reviews = append(reviews, review)
@@ -268,23 +292,29 @@ func GetReview(config Config) (Reviews, error) {
 	return reviews, nil
 }
 
-func parseRate(message string) string {
+func parseRate(message string) (string, int) {
 	rate := ""
+	rateCount := 0
 
 	switch {
 	case strings.Contains(message, "width: 20%"):
 		rate = strings.Repeat(RAITING_EMOJI, 1)
+		rateCount = 1
 	case strings.Contains(message, "width: 40%"):
 		rate = strings.Repeat(RAITING_EMOJI, 2)
+		rateCount = 2
 	case strings.Contains(message, "width: 60%"):
 		rate = strings.Repeat(RAITING_EMOJI, 3)
+		rateCount = 3
 	case strings.Contains(message, "width: 80%"):
 		rate = strings.Repeat(RAITING_EMOJI, 4)
+		rateCount = 4
 	case strings.Contains(message, "width: 100%"):
 		rate = strings.Repeat(RAITING_EMOJI, 5)
+		rateCount = 5
 	}
 
-	return rate
+	return rate, rateCount
 }
 
 func SaveReviews(reviews Reviews) (Reviews, error) {
@@ -341,11 +371,14 @@ func PostReview(config Config, reviews Reviews) error {
 		})
 
 		attachments = append(attachments, SlackAttachment{
-			Title:     review.Author,
-			TitleLink: fmt.Sprintf("%s%s", BASE_URI, review.AuthorUri),
-			Text:      review.Message,
-			Fallback:  review.Message + " " + review.AuthorUri,
-			Fields:    fields,
+			Author:    	review.Author,
+			AuthorLink:	fmt.Sprintf("%s%s", BASE_URI, review.AuthorUri),
+			Title:     	review.Title,
+			TitleLink: 	fmt.Sprintf("%s%s", BASE_URI, review.Permalink),
+			Text:      	review.Message,
+			Fallback:  	review.Message + " " + review.AuthorUri,
+			Color:		review.Color,
+			Fields:    	fields,
 		})
 	}
 
