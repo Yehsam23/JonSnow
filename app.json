@@ -22,6 +22,9 @@
     },
     "GAME_TITLE": {
       "description": "遊戲名稱"
+    },
+    "APP_ICON": {
+      "description": "遊戲Icon圖片"
     }
   },
   "addons": [
