@@ -21,6 +21,7 @@ import (
 
 type Config struct {
 	AppId       string `yaml:"app_id"`
+	AppIcon     string
 	ReviewCount int    `yaml:"review_count"`
 	BotName     string `yaml:"bot_name"`
 	IconEmoji   string `yaml:"icon_emoji"`
@@ -62,6 +63,7 @@ type SlackAttachment struct {
 	Text      	string                 `json:"text"`
 	Fallback  	string                 `json:"fallback"`
 	Color       string                 `json:"color"`
+	ThumbIcon   string 			  	   `json:"thumb_url"`
 	Fields    	[]SlackAttachmentField `json:"fields"`
 }
 
@@ -154,6 +156,11 @@ func NewConfig(path string) (config Config, err error) {
 		config.AppId = appId
 	}
 
+	appIcon := os.Getenv("APP_ICON")
+	if appIcon != "" {
+		config.AppIcon = appIcon
+	}
+
 	// override WebHookUri if environment variable found
 	webHookUri := os.Getenv("SLACK_HOOK")
 	if webHookUri != "" {
@@ -237,15 +244,33 @@ func GetReview(config Config) (Reviews, error) {
 		authorUri, _ := authorNode.Attr("href")
 
 		dateNode := s.Find(REVIEW_DATE_CLASS_NAME)
+		dateString := dateNode.Text()
 
 		var timeForm string
 		if config.Location == "zh-tw" {
 			timeForm = "2006年1月2日"
-		} else if config.Location == "en" {
+		} else if config.Location == "ru" {
+			//俄文要轉換
+			r := strings.NewReplacer("январь", "January", "января", "January",
+							    	 "февраль", "February", "февраля", "February",
+							    	 "март", "March",
+							    	 "апреля", "April", "апрель", "April",
+							    	 "мая", "May",
+							    	 "июнь", "June", "июя", "June", "июн", "June",
+							    	 "июль", "July", "июя", "July", "июл", "July",
+							    	 "август", "August", "авг", "August",
+							    	 "сентябрь", "September", "сентября", "September", "сен", "September",
+							    	 "октября", "October", "октябрь", "October",
+							    	 "ноябрь", "November", "ноя", "November",
+							    	 "декабрь", "December", "декабря", "December")
+			dateString = r.Replace(dateString)
+
+		 	timeForm = "2 January 2006 г."
+		} else {
 			timeForm = "January 2, 2006"
 		}
 
-		date, err := time.Parse(timeForm, dateNode.Text())
+		date, err := time.Parse(timeForm, dateString)
 		if err != nil {
 			log.Println(err)
 			return
@@ -269,7 +294,9 @@ func GetReview(config Config) (Reviews, error) {
 
 		rate, rateCount := parseRate(rateMessage)
 		color := "#36a64f"
-		if rateCount < 4 {
+		if rateCount == 3 {
+			color = "#bbbbbb"
+		} else if rateCount < 4 {
 			color = "#ff0000"
 		}
 
@@ -378,6 +405,7 @@ func PostReview(config Config, reviews Reviews) error {
 			Text:      	review.Message,
 			Fallback:  	review.Message + " " + review.AuthorUri,
 			Color:		review.Color,
+			ThumbIcon:  config.AppIcon,
 			Fields:    	fields,
 		})
 	}
